@@ -25,7 +25,6 @@ Run the example below from the directory containing `eqbot/`. The example requir
 `ActionFrame` maps canonical coordinates to original coordinates. Use `canonicalize` for training targets and `decanonicalize` for inference outputs.
 
 ```bash
-python - <<'PY'
 import torch
 from eqbot.common import ActionCanonicalizer, ActionFrame
 
@@ -37,7 +36,6 @@ targets = mapper.canonicalize(actions, frame)
 recovered = mapper.decanonicalize(targets, frame)
 torch.testing.assert_close(recovered, actions)
 print("Action recovery round trip passed.")
-PY
 ```
 
 | Policy and setting | Representation | Recovery |
