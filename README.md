@@ -1,6 +1,23 @@
 # Eq.Bot: Model-Agnostic Canonicalization for Equivariant Robotic Manipulation
 
-Eq.Bot estimates a shared geometric frame, aligns observations to that frame, evaluates the base policy once, and recovers its predictions in the original coordinates. The base policy keeps its architecture and native action representation. Exact equivariance requires consistent frame estimates and compatible observation and action transformations.
+This package provides the core implementation of **Eq.Bot**, a model-agnostic framework for geometrically consistent robotic manipulation. Eq.Bot uses a shared learned frame for observation canonicalization and representation-specific action recovery, preserving the architecture and native action interface of existing CNN- and Transformer-based policies.
+
+## Overview
+
+Vision-language-action (VLA) policies can generalize to new objects and instructions, while remaining sensitive to scene rotations. Maintaining geometric consistency across existing policies is further complicated by their different action representations, from pixel affordances to Cartesian actions and joint targets.
+
+**Eq.Bot** is a model-agnostic canonicalization framework for robotic manipulation grounded in group equivariance. It aligns the observation to a learned canonical frame, evaluates the base policy once with the original language instruction, and reuses the same frame estimate to recover the action in the original coordinates. The recovery map is tailored to the native action representation, so the base policy retains both its architecture and its output interface. The composite policy is equivariant when frame estimates are consistent with scene transformations and the observation and action mappings are compatible.
+
+![Eq.Bot pipeline and the DirNet and OptNet canonicalizers](assets/eqbot-overview.jpg)
+
+### Canonicalizers
+
+Eq.Bot provides two ways to learn a canonical frame within the same interface:
+
+- **DirNet** scores candidate frames directly from group-equivariant features.
+- **OptNet** encodes transformed views with a conventional CNN or Wide ResNet-50 and scores them against a learned reference by cosine similarity.
+
+Both variants can be trained jointly with the trainable components of the base policy under task supervision. The base policy processes only the selected view, regardless of how many candidates the canonicalizer scores.
 
 ## Code Organization
 
@@ -12,17 +29,13 @@ Eq.Bot estimates a shared geometric frame, aligns observations to that frame, ev
 | `canonicalization/` | Discrete image and VLA wrappers and continuous planar canonicalizers. |
 | `canonicalization_networks/` | Discrete DirNet, its continuous steerable counterpart, and conventional CNN and Wide ResNet-50 encoders for OptNet. |
 
-Use `eqbot.common` for the action interface. The image modules `discrete_group_sq.py`, `discrete_group_vla.py`, and `continuous_group.py` expose the observation canonicalizers. For discrete rotations, `GroupEquivariantImageCanonicalization` estimates a frame from group scores; `OptimizedGroupEquivariantImageCanonicalization` scores rotated views against a learned reference. The default group in the paper is `C4`. Continuous planar estimation uses an angle predicted from a vector, rather than the discrete view-scoring procedure.
+Use `eqbot.common` to import the action interface. The discrete image wrappers expose `GroupEquivariantImageCanonicalization` for DirNet and `OptimizedGroupEquivariantImageCanonicalization` for OptNet. The continuous variants are defined in `canonicalization/continuous_group.py`.
 
-## Dependencies and Local Checks
+## Quick Start
 
-Use Python 3.10 or later. The action maps require PyTorch. Image canonicalization also requires NumPy, Kornia, TorchVision, and OmegaConf. The discrete DirNet encoder requires `e2cnn`; the continuous steerable encoder requires `escnn`. These two backends are loaded only when their respective encoders are used. The Wide ResNet-50 encoder defaults to `weights=None` so it can be initialized offline. Supply a local checkpoint or explicitly select weights to reproduce an initialization that uses pretrained features.
+Use Python 3.10 or later with PyTorch for the action interface. The image wrappers also require NumPy, Kornia, TorchVision, and OmegaConf. The discrete DirNet encoder requires `e2cnn`, and the continuous steerable encoder requires `escnn`. The Wide ResNet-50 encoder defaults to `weights=None`, so initialization does not download weights.
 
-Run the example below from the directory containing `eqbot/`. The example requires only PyTorch and runs on CPU.
-
-## Action Representations and Recovery
-
-`ActionFrame` maps canonical coordinates to original coordinates. Use `canonicalize` for training targets and `decanonicalize` for inference outputs.
+Run the example from the directory containing `eqbot/`. It uses a known frame and a synthetic Cartesian action to check action recovery on CPU, with no simulator, checkpoint, or robot required. `ActionFrame` maps canonical coordinates to original coordinates; `canonicalize` maps training targets into the canonical frame, and `decanonicalize` maps predictions back.
 
 ```bash
 import torch
@@ -38,26 +51,45 @@ torch.testing.assert_close(recovered, actions)
 print("Action recovery round trip passed.")
 ```
 
+## Policy Integrations and Evaluation
+
+The paper evaluates Eq.Bot across four simulation benchmarks and three UR5e tasks: Place Object, Pack Box, and Stack Blocks. The integrations use the same frame convention while retaining the native policy outputs listed below.
+
 | Policy and setting | Representation | Recovery |
 | --- | --- | --- |
 | CLIPORT on Ravens | `pixel_pick_place` or `spatial_maps` | Recover pixel locations, absolute headings, or spatial score maps. Relative place headings are unchanged. |
 | OpenVLA-OFT on LIBERO | `delta_rotvec` | Rotate workspace-frame translation and rotation increments without adding a position offset. |
 | OpenVLA-OFT on the physical robot | `absolute_rotvec` | Compose the absolute end-effector pose with the estimated frame. |
-| `pi0.5` on VLABench | `absolute_euler_xyz` | Compose the pose and re-encode its orientation as extrinsic XYZ Euler angles. |
+| $\pi_{0.5}$ on VLABench | `absolute_euler_xyz` | Compose the pose and re-encode its orientation as extrinsic XYZ Euler angles. |
 | TurboVLA on RoboTwin 2.0 | `bimanual_joint` | Transform each arm's pose through forward and inverse kinematics on a fixed reachable branch. |
 
-Decode normalized policy outputs before recovery. Use float32 or float64 for geometry, with meters and radians for physical actions. Gripper commands are preserved. For square image outputs, `ActionFrame.from_image_rotation` converts the stored discrete image angle into the pixel coordinate convention; it does not provide a physical workspace transform. Pixel actions are expressed in column/row order. On square-padded inputs, account for the padding offsets when moving between image and canvas coordinates.
+### Selected Results
+
+| Setting | Base policy | Metric (%) | Base | + OptNet | + DirNet |
+| --- | --- | --- | ---: | ---: | ---: |
+| Ravens | CLIPORT | Mean completion (100 demonstrations per task) | 66.97 | 76.06 | **76.75** |
+| LIBERO | OpenVLA-OFT | Mean success | 96.5 | 97.5 | **97.7** |
+| VLABench | $\pi_{0.5}$ | Mean intention score | 61.0 | 66.4 | **67.1** |
+| VLABench | $\pi_{0.5}$ | Mean progress score | 42.4 | 45.5 | **46.1** |
+| RoboTwin 2.0 | TurboVLA | Mean success (Clean and Randomized) | 87.55 | 89.88 | **90.96** |
+| UR5e | OpenVLA-OFT | Mean collision-free success | 63.3 | 76.7 | **83.3** |
+| UR5e | OpenVLA-OFT | Mean progress score | 78.7 | 92.7 | **93.2** |
+
+OptNet denotes the ResNet-50 variant in this comparison. The Ravens row averages 18 task settings at the indicated demonstration budget. See the paper and appendix for the full comparisons, including OptNet-CNN and the per-task results.
+
+### Integration Notes
+
+Decode normalized outputs before applying the recovery map. For physical actions, use float32 or float64, with positions in meters and angles in radians. Recovery preserves gripper commands. For square image outputs, `ActionFrame.from_image_rotation` builds a pixel-space frame from the stored angle. Pixel actions use column/row order; account for padding when converting between image and canvas coordinates.
 
 For multiview control, use a consistent workspace frame across views, proprioception, and action recovery. The dual-camera wrapper does not infer this frame from independently estimated image angles. For joint recovery, supply `forward`, `inverse`, and `in_domain` for each arm in the same workspace coordinates.
 
 ## Code Release
 
-This package contains the shared Eq.Bot components described above: observation canonicalizers and action recovery operators for different policy outputs. The CPU example checks action recovery in isolation. Reproducing the reported experiments also requires the corresponding policy integrations, training and evaluation scripts, and data.
+This supplementary package contains the shared Eq.Bot implementation. The experiment-specific code and data needed to reproduce the results are being prepared for public release:
 
-We are preparing these materials for public release:
+- **Simulation:** Policy integrations and training and evaluation scripts for Ravens, LIBERO, VLABench, and RoboTwin 2.0, along with instructions for obtaining and preparing the public benchmark datasets.
+- **Real world:** UR5e training, deployment, and evaluation code, along with the collected robot demonstration dataset.
 
-- **Simulation benchmarks:** Eq.Bot policy integrations and training and evaluation scripts for Ravens, LIBERO, VLABench, and RoboTwin 2.0, with instructions for obtaining and preparing each public benchmark dataset.
-- **Real-world experiments:** UR5e training, deployment, and evaluation code, together with the collected robot demonstration dataset.
+Datasets, trained checkpoints, camera calibrations, and robot-specific kinematics are outside the scope of this supplementary package.
 
-The current package does not include datasets, trained checkpoints, camera calibrations, or robot-specific kinematics. See the paper and appendix for the experimental setup, evaluation protocols, and results.
 
