@@ -63,7 +63,7 @@ The paper evaluates Eq.Bot across four simulation benchmarks and three UR5e task
 | $\pi_{0.5}$ on VLABench | `absolute_euler_xyz` | Compose the pose and re-encode its orientation as extrinsic XYZ Euler angles. |
 | TurboVLA on RoboTwin 2.0 | `bimanual_joint` | Transform each arm's pose through forward and inverse kinematics on a fixed reachable branch. |
 
-### Performance Benchmarks
+## Performance Benchmarks
 
 | Setting | Base policy | Metric (%) | Base | + OptNet | + DirNet |
 | --- | --- | --- | ---: | ---: | ---: |
