@@ -52,13 +52,14 @@ Decode normalized policy outputs before recovery. Use float32 or float64 for geo
 
 For multiview control, use a consistent workspace frame across views, proprioception, and action recovery. The dual-camera wrapper does not infer this frame from independently estimated image angles. For joint recovery, supply `forward`, `inverse`, and `in_domain` for each arm in the same workspace coordinates.
 
-## Usage
+## Code Release
 
-This code provides the core building blocks for the Eq.Bot framework. To integrate it with a robotic manipulation pipeline, you would:
+This package contains the shared Eq.Bot components described above: observation canonicalizers and action recovery operators for different policy outputs. The CPU example checks action recovery in isolation. Reproducing the reported experiments also requires the corresponding policy integrations, training and evaluation scripts, and data.
 
-1. Instantiate a canonicalization network from `canonicalization_networks/`.
-2. Wrap your existing policy with the canonicalization and inverse transformation logic provided in `canonicalization/`.
-3. Train or finetune the canonicalization network alongside the base policy.
+We are preparing these materials for public release:
 
-For detailed experimental setup and results, please refer to our main paper.
+- **Simulation benchmarks:** Eq.Bot policy integrations and training and evaluation scripts for Ravens, LIBERO, VLABench, and RoboTwin 2.0, with instructions for obtaining and preparing each public benchmark dataset.
+- **Real-world experiments:** UR5e training, deployment, and evaluation code, together with the collected robot demonstration dataset.
+
+The current package does not include datasets, trained checkpoints, camera calibrations, or robot-specific kinematics. See the paper and appendix for the experimental setup, evaluation protocols, and results.
 
