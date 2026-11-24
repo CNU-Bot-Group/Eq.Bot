@@ -1,30 +1,56 @@
-# Eq.Bot: Enhance Robotic Manipulation Learning via Group Equivariant Canonicalizationn
+# Eq.Bot: Model-Agnostic Canonicalization for Equivariant Robotic Manipulation
 
-Eq.Bot is a model-agnostic solution that can be integrated with existing multi-modal architectures (both CNN-based and Transformer-based) without requiring architectural modifications. It works by transforming observations into a canonical space, applying an existing policy, and mapping the resulting actions back to the original space.
+Eq.Bot estimates a shared geometric frame, aligns observations to that frame, evaluates the base policy once, and recovers its predictions in the original coordinates. The base policy keeps its architecture and native action representation. Exact equivariance requires consistent frame estimates and compatible observation and action transformations.
 
-## Core Code Structure
+## Code Organization
 
-The core logic of the Eq.Bot framework is organized as follows:
+| Module | Contents |
+| --- | --- |
+| `common/basecanonicalization.py` | Shared base classes for identity, discrete, and continuous canonicalization. |
+| `common/action_canonicalization.py` | Rigid frames and representation-specific action maps. |
+| `common/utils.py` | Shared tensor geometry, image warps, and annotation transforms. |
+| `canonicalization/` | Discrete image and VLA wrappers and continuous planar canonicalizers. |
+| `canonicalization_networks/` | Discrete DirNet, its continuous steerable counterpart, and conventional CNN and Wide ResNet-50 encoders for OptNet. |
 
-- `canonicalization/`: This directory contains the foundational modules for performing the canonicalization and inverse transformation operations.
+Use `eqbot.common` for the action interface. The image modules `discrete_group_sq.py`, `discrete_group_vla.py`, and `continuous_group.py` expose the observation canonicalizers. For discrete rotations, `GroupEquivariantImageCanonicalization` estimates a frame from group scores; `OptimizedGroupEquivariantImageCanonicalization` scores rotated views against a learned reference. The default group in the paper is `C4`. Continuous planar estimation uses an angle predicted from a vector, rather than the discrete view-scoring procedure.
 
-  - `basecanonicalization.py`: Defines the abstract base class for the canonicalization process.
-  - `discrete_group.py`: Implements the discrete SE(2) group operations (e.g., rotations and translations) used to transform observations and actions.
-  - `utils.py`: Contains utility functions supporting the transformation and canonicalization process.
-- `canonicalization_networks/`: This directory provides the network architectures used to estimate the canonical transformation from input observations. As discussed in our paper, we support different network designs.
+## Dependencies and Local Checks
 
-  - `equivariant_networks.py`: Implements group equivariant network architectures for the canonicalization module. These networks are designed with built-in symmetries to improve sample efficiency and generalization.
-  - `nonequivariant_networks.py`: Implements standard (non-equivariant) CNN architectures that can be used within the canonicalization framework to estimate the transformation parameters.
+Use Python 3.10 or later. The action maps require PyTorch. Image canonicalization also requires NumPy, Kornia, TorchVision, and OmegaConf. The discrete DirNet encoder requires `e2cnn`; the continuous steerable encoder requires `escnn`. These two backends are loaded only when their respective encoders are used. The Wide ResNet-50 encoder defaults to `weights=None` so it can be initialized offline. Supply a local checkpoint or explicitly select weights to reproduce an initialization that uses pretrained features.
 
-## How It Works
+Run the example below from the directory containing `eqbot/`. The example requires only PyTorch and runs on CPU.
 
-The Eq.Bot framework operates in three main stages:
+## Action Representations and Recovery
 
-1. **Canonicalization**: An input observation (e.g., an image) is passed through a **Group Equivariant Canonicalization Network** (from `canonicalization_networks/`) to estimate a transformation $g$. The observation is then transformed into a canonical orientation.
-2. **Action Prediction**: The canonicalized observation is fed into a pre-existing, unmodified base policy (e.g., CLIPort, OpenVLA-OFT) to predict an action in the canonical coordinate system.
-3. **Inverse Transformation**: The predicted action is mapped back from the canonical space to the original observation's coordinate system using the inverse of the estimated transformation $g^{-1}$. The modules in `canonicalization/` are used for this step.
+`ActionFrame` maps canonical coordinates to original coordinates. Use `canonicalize` for training targets and `decanonicalize` for inference outputs.
 
-This "wrap-around" approach allows us to add a strong inductive bias for spatial equivariance to a wide range of models without needing to alter their internal architecture.
+```bash
+python - <<'PY'
+import torch
+from eqbot.common import ActionCanonicalizer, ActionFrame
+
+frame = ActionFrame.from_yaw(torch.tensor([torch.pi / 2]),
+                             torch.tensor([0.4, 0.0, 0.0]))
+actions = torch.tensor([[[0.5, 0.0, 0.2, 0.0, 0.0, 0.0, 1.0]]])
+mapper = ActionCanonicalizer("absolute_rotvec")
+targets = mapper.canonicalize(actions, frame)
+recovered = mapper.decanonicalize(targets, frame)
+torch.testing.assert_close(recovered, actions)
+print("Action recovery round trip passed.")
+PY
+```
+
+| Policy and setting | Representation | Recovery |
+| --- | --- | --- |
+| CLIPORT on Ravens | `pixel_pick_place` or `spatial_maps` | Recover pixel locations, absolute headings, or spatial score maps. Relative place headings are unchanged. |
+| OpenVLA-OFT on LIBERO | `delta_rotvec` | Rotate workspace-frame translation and rotation increments without adding a position offset. |
+| OpenVLA-OFT on the physical robot | `absolute_rotvec` | Compose the absolute end-effector pose with the estimated frame. |
+| `pi0.5` on VLABench | `absolute_euler_xyz` | Compose the pose and re-encode its orientation as extrinsic XYZ Euler angles. |
+| TurboVLA on RoboTwin 2.0 | `bimanual_joint` | Transform each arm's pose through forward and inverse kinematics on a fixed reachable branch. |
+
+Decode normalized policy outputs before recovery. Use float32 or float64 for geometry, with meters and radians for physical actions. Gripper commands are preserved. For square image outputs, `ActionFrame.from_image_rotation` converts the stored discrete image angle into the pixel coordinate convention; it does not provide a physical workspace transform. Pixel actions are expressed in column/row order. On square-padded inputs, account for the padding offsets when moving between image and canvas coordinates.
+
+For multiview control, use a consistent workspace frame across views, proprioception, and action recovery. The dual-camera wrapper does not infer this frame from independently estimated image angles. For joint recovery, supply `forward`, `inverse`, and `in_domain` for each arm in the same workspace coordinates.
 
 ## Usage
 
